@@ -1,0 +1,9 @@
+/data/
+/annotation/
+/features/
+/result/
+/models/tsn/
+/.idea/
+*.pyc
+*.xml
+*.txt
