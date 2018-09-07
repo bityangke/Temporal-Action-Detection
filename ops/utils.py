@@ -39,12 +39,35 @@ class AddBias(nn.Module):
         return x + bias
 
 
+# def unet_accuracy(output, target, threshold=0.5):
+#     """Computes the precision@k for the specified values of k"""
+#     # 在原始代码中，假设target是一个数字。
+#     # 现在我要改变这个函数，使得他们同样可以适配 N-hot Vector 的target。
+#     if isinstance(topk, int):
+#         topk = (topk)
+#     maxk = max(topk)
+#     batch_size = target.size(0)
+#
+#     _, pred = output.topk(maxk, 1, True, True)
+#     pred = pred.t()
+#     correct = pred.eq(target.view(1, -1).expand_as(pred))
+#
+#     res = []
+#     for k in topk:
+#         correct_k = correct[:k].view(-1).float().sum(0)
+#         res.append(correct_k.mul_(100.0 / batch_size))
+#     return res
+
+
 def accuracy(output, target, topk=(1,)):
     """Computes the precision@k for the specified values of k"""
     if isinstance(topk, int):
         topk = (topk)
     maxk = max(topk)
     batch_size = target.size(0)
+
+    if len(target.shape)==2:
+        _, target = target.max(dim=1)
 
     _, pred = output.topk(maxk, 1, True, True)
     pred = pred.t()

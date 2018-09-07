@@ -9,13 +9,13 @@ from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.vec_env.vec_normalize import VecNormalize
 
 from dataset import FeatureDataset
-from env import make_env
+from deprecated.env import make_env
+from models.module import Policy, load_clf_from_i3d, Classifier
 from ops.a2c_acktr import A2C_ACKTR
 from ops.fuser import Fuser
 from ops.ppo import PPO
 from ops.storage import RolloutStorage
 from ops.utils import AverageMeter
-from models.module import Policy, load_clf_from_i3d, Classifier
 
 
 def main(args):

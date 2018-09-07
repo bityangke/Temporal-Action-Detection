@@ -1,26 +1,48 @@
 import os
 
+fucklistval = [178, 932, 173, 665, 183, 786, 171]
 
-def read(root, txt):
+
+
+def fuckoff(path):
+    # assert isinstance(path, str)
+    if int(path.split('/')[-2][-4:]) in fucklistval:
+        return True
+    return False
+
+def read(txt):
     list_file = []
     list_label = []
+    list_l = []
     with open(txt, 'r') as f:
         for i in f:
-            f, l = i.strip().split(' ')
+            f, l, la = i.strip().split(' ')
             list_file.append(f)
-            list_label.append(l)
+            list_l.append(l)
+            list_label.append(la)
     result = []
-    for path, label in zip(list_file, list_label):
-        path = root + path
-        file_list = os.listdir(path)
-        file_list = [x for x in file_list if x.split('.')[1] == 'jpg']
-        cnt = int(len(file_list) / 2)
-        aline = path + ' ' + str(cnt) + ' ' + label + '\n'
-        result.append(aline)
+    lastfile = ''
+    lastlabel = []
+    aline = None
+    for path, length, label in zip(list_file, list_l, list_label):
+        if fuckoff(path):
+            continue
 
-    with open('thumos_val_flow.txt', 'w') as f:
+        if path == lastfile:
+            lastlabel.append(label)
+            aline = path + ' ' + length + ' ' + str(lastlabel) + '\n'
+        else:
+            if aline:
+                result.append(aline)
+            lastlabel = [label]
+            aline = path + ' ' + length + ' ' + label + '\n'
+            # result.append(aline)
+            lastfile = path
+            # aline = None
+    with open('thumos_val_rgb_new.txt', 'w') as f:
         f.writelines(result)
-
+        for i in result:
+            print(i)
 
 def ucfread(root, indextxt, outputfilename):
     # indextxt should be downloaded at: http://crcv.ucf.edu/THUMOS14/Class%20Index.txt

@@ -25,75 +25,16 @@ class VideoRecord(object):
 
     @property
     def label(self):
-        return int(self._data[2])
+        return eval(self._data[2])
 
 class UnetVideoDataSet(data.Dataset):
-    def __init__(self, rgb_list_file, flow_list_file, clip_num=7,
-                 rgb_tmpl='image_{:06d}.jpg', flow_tmpl='flow_{}_{:06d}.jpg', segment_length=16,
-                 is_thumos14_test_folder=False, transform=None, verbose=False, test=False):
-        self.iftest = test
-        self.clip_num = clip_num
-        self.rgb_tmpl = rgb_tmpl
-        self.flow_tmpl = flow_tmpl
-        self.transform = transform
-        self.segment_length = segment_length
-        self.thumos14_test_flag = is_thumos14_test_folder
-        self.segment_num = 0
-        self.rgb_video_list = [VideoRecord(x.strip().split(' ')) for x in open(rgb_list_file)]
-        self.flow_video_list = [VideoRecord(x.strip().split(' ')) for x in open(flow_list_file)]
-        self.verbose = verbose
-
-    def __getitem__(self, index):
-        rgb_record = self.rgb_video_list[index]
-        flow_record = self.flow_video_list[index]
-        self.segment_num = flow_record.num_frames // self.segment_length
-        rgb_rst = []
-        flow_rst = []
-        seg_num_in_clip = self.segment_num//self.clip_num
-        for i in range(self.clip_num):
-            seg_index = i*seg_num_in_clip + np.random.randint(0, seg_num_in_clip)
-            rgb_process_data, flow_process_data = self._get_segment(seg_index, [rgb_record, flow_record])
-            rgb_rst.append(rgb_process_data)
-            flow_rst.append(flow_process_data)
-        return torch.stack(rgb_rst), torch.stack(flow_rst), rgb_record.path, rgb_record.label-1 if self.thumos14_test_flag else rgb_record.label, self.segment_num
-
-    def _get_segment(self, seg_index, records):
-        if seg_index > self.segment_num:
-            raise IndexError(
-                "Segement Index Out of Range! Input Seg_ind: {}, Maximum possible segment index: {}.".format(seg_index,
-                                                                                                             self.segment_num - 1))
-        rgb_images = list()
-        flow_images = list()
-        for i in range(seg_index * self.segment_length, (seg_index + 1) * self.segment_length):
-            rgb_frame, flow_frame = self._load_image(records, i + 1)
-            rgb_images.extend(rgb_frame)
-            flow_images.extend(flow_frame)
-        rgb_process_data = self.transform(rgb_images)
-        flow_process_data = self.transform(flow_images)
-        return rgb_process_data, flow_process_data
-
-    def _load_image(self, records, idx):
-        rgb_record, flow_record = records
-        rgb = [Image.open(os.path.join(rgb_record.path, self.rgb_tmpl.format(idx))).convert('RGB')]
-        x_img = Image.open(os.path.join(flow_record.path, self.flow_tmpl.format('x', idx))).convert('L')
-        y_img = Image.open(os.path.join(flow_record.path, self.flow_tmpl.format('y', idx))).convert('L')
-        return rgb, [x_img, y_img]
-
-    def __len__(self):
-        return len(self.flow_video_list)
-
-
-
-
-
-
-class UnetVideoDataSetNoFixedSegment(data.Dataset):
         def __init__(self, rgb_list_file, flow_list_file, clip_num=7,
-                     rgb_tmpl='image_{:06d}.jpg', flow_tmpl='flow_{}_{:06d}.jpg', segment_length=16,
-                     is_thumos14_test_folder=False, transform=None, verbose=False, test=False):
+                     rgb_tmpl='image_{:06d}.jpg', flow_tmpl='flow_{}_{:06d}.jpg', class_num=101, segment_length=16,
+                     is_thumos14_test_folder=False, transform=None, verbose=False, test=False, modality=None):
             self.iftest = test
             self.clip_num = clip_num
             self.rgb_tmpl = rgb_tmpl
+            self.modality = modality
             self.flow_tmpl = flow_tmpl
             self.transform = transform
             self.segment_length = segment_length
@@ -102,41 +43,48 @@ class UnetVideoDataSetNoFixedSegment(data.Dataset):
             self.rgb_video_list = [VideoRecord(x.strip().split(' ')) for x in open(rgb_list_file)]
             self.flow_video_list = [VideoRecord(x.strip().split(' ')) for x in open(flow_list_file)]
             self.verbose = verbose
+            self.class_num = class_num
 
         def __getitem__(self, index):
             rgb_record = self.rgb_video_list[index]
             flow_record = self.flow_video_list[index]
-            clip_range = flow_record.num_frames // self.clip_num
+            clip_range = (flow_record.num_frames - self.segment_length) // self.clip_num
             rgb_rst = []
-            flow_rst = []
             for i in range(self.clip_num):
-                if clip_range-self.segment_length+1<=0:
-                    print(clip_range, flow_record)
-                start_frame = i * clip_range + np.random.randint(0, clip_range-self.segment_length+1)
-                rgb_process_data, flow_process_data = self._get_segment(start_frame, [rgb_record, flow_record])
-                rgb_rst.append(rgb_process_data)
-                flow_rst.append(flow_process_data)
-            return torch.stack(rgb_rst), torch.stack(
-                flow_rst), rgb_record.path, rgb_record.label - 1 if self.thumos14_test_flag else rgb_record.label, self.segment_num
+                start_frame = i * clip_range + np.random.randint(0, clip_range)
+                data = self._get_segment(start_frame, [rgb_record, flow_record])
+                rgb_rst.append(data)
+            label = rgb_record.label
+            if self.thumos14_test_flag:
+                label -= 1
+            onehotlabel = torch.zeros((self.class_num,))
+            if isinstance(label, list):
+                for num in label:
+                    onehotlabel[num] = 1
+            elif isinstance(label, int):
+                    onehotlabel[label] = 1
+            return torch.stack(rgb_rst), onehotlabel, rgb_record.path, self.segment_num
 
         def _get_segment(self, start_frame, records):
             assert start_frame+self.segment_length<=records[1].num_frames, (start_frame, records[1].num_frames)
             rgb_images = list()
-            flow_images = list()
             for i in range(start_frame, start_frame + self.segment_length):
-                rgb_frame, flow_frame = self._load_image(records, i + 1)
+                rgb_frame = self._load_image(records, i + 1)
                 rgb_images.extend(rgb_frame)
-                flow_images.extend(flow_frame)
             rgb_process_data = self.transform(rgb_images)
-            flow_process_data = self.transform(flow_images)
-            return rgb_process_data, flow_process_data
+            return rgb_process_data
 
         def _load_image(self, records, idx):
             rgb_record, flow_record = records
-            rgb = [Image.open(os.path.join(rgb_record.path, self.rgb_tmpl.format(idx))).convert('RGB')]
-            x_img = Image.open(os.path.join(flow_record.path, self.flow_tmpl.format('x', idx))).convert('L')
-            y_img = Image.open(os.path.join(flow_record.path, self.flow_tmpl.format('y', idx))).convert('L')
-            return rgb, [x_img, y_img]
+            if self.modality=='rgb':
+                rgb = [Image.open(os.path.join(rgb_record.path, self.rgb_tmpl.format(idx))).convert('RGB')]
+                return rgb
+            elif self.modality=='flow':
+                x_img = Image.open(os.path.join(flow_record.path, self.flow_tmpl.format('x', idx))).convert('L')
+                y_img = Image.open(os.path.join(flow_record.path, self.flow_tmpl.format('y', idx))).convert('L')
+            else:
+                raise  ValueError
+            return [x_img, y_img]
 
         def __len__(self):
             return len(self.flow_video_list)
@@ -196,13 +144,77 @@ class UnetVideoDataSetNoFixedSegment(data.Dataset):
 #     def __len__(self):
 #         return len(self.flow_video_list)
 
+class SingleVideoDataSet(data.Dataset):
+    def __init__(self, rgb_list_file, flow_list_file, batch_size,
+                 rgb_tmpl='image_{:06d}.jpg', flow_tmpl='flow_{}_{:06d}.jpg', class_num=101,
+                 one_hot=False, is_thumos14_test_folder=False,
+                 segment_length=16,
+                 transform=None):
+        if one_hot==True:
+            raise NotImplementedError
+        self.batch_size = batch_size
+        self.rgb_tmpl = rgb_tmpl
+        self.flow_tmpl = flow_tmpl
+        self.transform = transform
+        self.segment_length = segment_length
+        self.if_thumos_test = is_thumos14_test_folder
+        self.segment_num = 0
+        self.class_num = class_num
+        self.rgb_video_list = [VideoRecord(x.strip().split(' ')) for x in open(rgb_list_file)]
+        self.flow_video_list = [VideoRecord(x.strip().split(' ')) for x in open(flow_list_file)]
 
+    def __getitem__(self, video_index):
+        rgb_record = self.rgb_video_list[video_index]
+        flow_record = self.flow_video_list[video_index]
+        self.segment_num = flow_record.num_frames // self.segment_length
+        def gen():
+            rgb_data = []
+            flow_data = []
+            for i in range(self.segment_num):
+                rgb_process_data, flow_process_data = self._get_segment(i, [rgb_record, flow_record])
+                rgb_data.append(rgb_process_data)
+                flow_data.append(flow_process_data)
+                if (i+1)%self.batch_size==0:
+                    yield torch.stack(rgb_data), torch.stack(flow_data)
+                    rgb_data = []
+                    flow_data = []
+            yield torch.stack(rgb_data), torch.stack(flow_data)
+        label = rgb_record.label
+        if self.if_thumos_test:
+            label -= 1
+        return gen(), label, rgb_record.path, video_index, self.segment_num
 
+    def _get_segment(self, seg_index, records):
+        if seg_index > self.segment_num:
+            raise IndexError(
+                "Segement Index Out of Range! Input Seg_ind: {}, Maximum possible segment index: {}.".format(seg_index,
+                                                                                                             self.segment_num - 1))
+        rgb_images = list()
+        flow_images = list()
+        for i in range(seg_index * self.segment_length, (seg_index + 1) * self.segment_length):
+            rgb_frame, flow_frame = self._load_image(records, i + 1)
+            rgb_images.extend(rgb_frame)
+            flow_images.extend(flow_frame)
+        rgb_process_data = self.transform(rgb_images)
+        flow_process_data = self.transform(flow_images)
+        return rgb_process_data, flow_process_data
+
+    def _load_image(self, records, idx):
+        rgb_record, flow_record = records
+        rgb = [Image.open(os.path.join(rgb_record.path, self.rgb_tmpl.format(idx))).convert('RGB')]
+        x_img = Image.open(os.path.join(flow_record.path, self.flow_tmpl.format('x', idx))).convert('L')
+        y_img = Image.open(os.path.join(flow_record.path, self.flow_tmpl.format('y', idx))).convert('L')
+        return rgb, [x_img, y_img]
+
+    def __len__(self):
+        len(self.flow_video_list)
 
 
 class VideoDataSet(data.Dataset):
     def __init__(self, rgb_list_file, flow_list_file,
-                 rgb_tmpl='image_{:06d}.jpg', flow_tmpl='flow_{}_{:06d}.jpg', segment_length=16,
+                 rgb_tmpl='image_{:06d}.jpg', flow_tmpl='flow_{}_{:06d}.jpg', class_num=101,
+                 one_hot=False, is_thumos14_test_folder=False,
+                 segment_length=16,
                  transform=None, verbose=False, test=False, test_rate=None):
         if test:
             assert test_rate is not None
@@ -213,8 +225,11 @@ class VideoDataSet(data.Dataset):
         self.rgb_tmpl = rgb_tmpl
         self.flow_tmpl = flow_tmpl
         self.transform = transform
+        self.ifonehot = one_hot
         self.segment_length = segment_length
+        self.if_thumos_test = is_thumos14_test_folder
         self.segment_num = 0
+        self.class_num = class_num
         self.rgb_video_list = [VideoRecord(x.strip().split(' ')) for x in open(rgb_list_file)]
         self.flow_video_list = [VideoRecord(x.strip().split(' ')) for x in open(flow_list_file)]
         self.lookup = []
@@ -234,7 +249,18 @@ class VideoDataSet(data.Dataset):
         flow_record = self.flow_video_list[video_index]
         self.segment_num = flow_record.num_frames // self.segment_length
         rgb_process_data, flow_process_data = self._get_segment(seg_index, [rgb_record, flow_record])
-        return rgb_process_data, flow_process_data, rgb_record.path, rgb_record.label, video_index, seg_index, self.segment_num
+        label = rgb_record.label
+        if self.if_thumos_test:
+            label -= 1
+        if self.ifonehot:
+            onehotlabel = torch.zeros((self.class_num,))
+            if isinstance(label, list):
+                for num in label:
+                    onehotlabel[num] = 1
+            elif isinstance(label, int):
+                    onehotlabel[label] = 1
+            label = onehotlabel
+        return rgb_process_data, flow_process_data, rgb_record.path, label, video_index, seg_index, self.segment_num
 
     def _get_segment(self, seg_index, records):
         if seg_index > self.segment_num:
@@ -400,27 +426,23 @@ class FeatureDataset(data.Dataset):
         data = np.load(self.video_list['feature_path'].iloc[index])
         label = self.video_list['label'].iloc[index]
         path = self.video_list['video_path'].iloc[index]
-        ant = None
+        ant = []
         if self.ant_flag:
             ant = self.video_list['annotation'].iloc[index]
         if self.special_flag:
             label -= 1
-        return {
-            'data': self.fuser(data),
-            'label': label,
-            'video_length': data.shape[0] * self.segment_length,
-            'video_path': path,
-            'annotation': ant
-        }
+        return self.fuser(data), label if isinstance(label, np.int64) else torch.Tensor(eval(label.replace('.', ','))), data.shape[0] * self.segment_length, path, ant
 
     def __len__(self):
         return len(self.video_list)
 
 
-def build_video_dataset(dataset, train, test_rate=None, unet=False, unet_clip_num=7):
-    assert dataset in ['thumos_validation', 'thumos_test', 'ucf', 'anet', 'background'], dataset
+def build_video_dataset(dataset, train, test_rate=None, unet=False, unet_clip_num=7, modality=None, single=False, single_batch_size=None):
+    assert dataset in ['thumos_validation', 'thumos_test', 'ucf', 'anet', 'background', 'thumos_validation_old'], dataset
     assert isinstance(train, bool)
 
+    ont_hot = False
+    thumos_test = False
     if dataset == 'ucf':
         rgb_list_file = 'ucf_listrgb.txt'
         flow_list_file = 'ucf_listflow.txt'
@@ -428,12 +450,20 @@ def build_video_dataset(dataset, train, test_rate=None, unet=False, unet_clip_nu
         flow_tmpl = 'flow_{}_{:06d}.jpg'
         annotation_root = None
     elif dataset == 'thumos_validation':
+        ont_hot = True
         annotation_root = "annotation/validation"
         rgb_list_file = 'thumos_val_rgb.txt'
         flow_list_file = 'thumos_val_flow.txt'
         rgb_tmpl = 'image_{:06d}.jpg'
         flow_tmpl = 'flow_{}_{:06d}.jpg'
+    elif dataset == 'thumos_validation_old':
+        annotation_root = "annotation/validation"
+        rgb_list_file = 'thumos_val_rgb_OLD.txt'
+        flow_list_file = 'thumos_val_flow_OLD.txt'
+        rgb_tmpl = 'image_{:06d}.jpg'
+        flow_tmpl = 'flow_{}_{:06d}.jpg'
     elif dataset == 'thumos_test':
+        thumos_test = True
         annotation_root = "annotation/test"
         rgb_list_file = 'thumos_test_rgb.txt'
         flow_list_file = 'thumos_test_flow.txt'
@@ -453,16 +483,17 @@ def build_video_dataset(dataset, train, test_rate=None, unet=False, unet_clip_nu
         raise ValueError
 
     if unet:
-        assert dataset in ['thumos_validation', 'thumos_test']
+        # assert dataset in ['thumos_validation', 'thumos_test']
         if train:
             randomcropping = torchvision.transforms.Compose([
                 GroupScale(256),
                 GroupRandomCrop(224),
             ])
-            ds = UnetVideoDataSetNoFixedSegment(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
-                                        flow_tmpl=flow_tmpl,
-                                        clip_num=unet_clip_num,
-                                        transform=torchvision.transforms.Compose([
+            ds = UnetVideoDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+                                  flow_tmpl=flow_tmpl,
+                                  clip_num=unet_clip_num,
+                                  modality=modality,
+                                  transform=torchvision.transforms.Compose([
                                             randomcropping,
                                             Stack(roll=False),
                                             ToTorchFormatTensor(div=True),
@@ -472,75 +503,113 @@ def build_video_dataset(dataset, train, test_rate=None, unet=False, unet_clip_nu
                 GroupScale(256),
                 GroupCenterCrop(224),
             ])
-            ds = UnetVideoDataSetNoFixedSegment(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
-                                        flow_tmpl=flow_tmpl,
-                                        clip_num=unet_clip_num,
-                                        transform=torchvision.transforms.Compose([
+            ds = UnetVideoDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+                                  flow_tmpl=flow_tmpl,
+                                  clip_num=unet_clip_num,
+                                  modality=modality,
+                                  transform=torchvision.transforms.Compose([
                                             cropping,
                                             Stack(roll=False),
                                             ToTorchFormatTensor(div=True),
                                         ]), is_thumos14_test_folder=True)
         return {"dataset": ds} if not annotation_root else {'dataset': ds, 'annotation_root': annotation_root}
-    if dataset == 'background':
+    # if dataset == 'background':
+    #     if train:
+    #         randomcropping = torchvision.transforms.Compose([
+    #             GroupScale(256),
+    #             GroupRandomCrop(224),
+    #         ])
+    #         if test_rate:
+    #             ds = VideoActionnessDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+    #                                         flow_tmpl=flow_tmpl,
+    #                                         bg_flow_tmpl=bg_flow_tmpl,
+    #                                         bg_rgb_tmpl=bg_rgb_tmpl,
+    #                                         bg_rgb_file=bg_rgb_list_file,
+    #                                         bg_flow_file=bg_flow_list_file,
+    #                                         transform=torchvision.transforms.Compose([
+    #                                             randomcropping,
+    #                                             Stack(roll=False),
+    #                                             ToTorchFormatTensor(div=True),
+    #                                         ]), test=False, test_rate=test_rate)
+    #         else:
+    #             ds = VideoActionnessDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+    #                                         flow_tmpl=flow_tmpl,
+    #                                         bg_flow_tmpl=bg_flow_tmpl,
+    #                                         bg_rgb_tmpl=bg_rgb_tmpl,
+    #                                         bg_rgb_file=bg_rgb_list_file,
+    #                                         bg_flow_file=bg_flow_list_file,
+    #                                         transform=torchvision.transforms.Compose([
+    #                                             randomcropping,
+    #                                             Stack(roll=False),
+    #                                             ToTorchFormatTensor(div=True),
+    #                                         ]))
+    #     else:
+    #         cropping = torchvision.transforms.Compose([
+    #             GroupScale(256),
+    #             GroupCenterCrop(224),
+    #         ])
+    #         if test_rate:
+    #             ds = VideoActionnessDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+    #                                         flow_tmpl=flow_tmpl,
+    #                                         bg_flow_tmpl=bg_flow_tmpl,
+    #                                         bg_rgb_tmpl=bg_rgb_tmpl,
+    #                                         bg_rgb_file=bg_rgb_list_file,
+    #                                         bg_flow_file=bg_flow_list_file,
+    #                                         transform=torchvision.transforms.Compose([
+    #                                             cropping,
+    #                                             Stack(roll=False),
+    #                                             ToTorchFormatTensor(div=True),
+    #                                         ]), test=True, test_rate=test_rate)
+    #         else:
+    #             ds = VideoActionnessDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+    #                                         flow_tmpl=flow_tmpl,
+    #                                         bg_flow_tmpl=bg_flow_tmpl,
+    #                                         bg_rgb_tmpl=bg_rgb_tmpl,
+    #                                         bg_rgb_file=bg_rgb_list_file,
+    #                                         bg_flow_file=bg_flow_list_file,
+    #                                         transform=torchvision.transforms.Compose([
+    #                                             cropping,
+    #                                             Stack(roll=False),
+    #                                             ToTorchFormatTensor(div=True),
+    #                                         ]))
+    #     return {"dataset": ds} if not annotation_root else {'dataset': ds, 'annotation_root': annotation_root}
+    if single:
+        assert isinstance(single_batch_size, int), single_batch_size
         if train:
             randomcropping = torchvision.transforms.Compose([
                 GroupScale(256),
                 GroupRandomCrop(224),
             ])
-            if test_rate:
-                ds = VideoActionnessDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
-                                            flow_tmpl=flow_tmpl,
-                                            bg_flow_tmpl=bg_flow_tmpl,
-                                            bg_rgb_tmpl=bg_rgb_tmpl,
-                                            bg_rgb_file=bg_rgb_list_file,
-                                            bg_flow_file=bg_flow_list_file,
-                                            transform=torchvision.transforms.Compose([
-                                                randomcropping,
-                                                Stack(roll=False),
-                                                ToTorchFormatTensor(div=True),
-                                            ]), test=False, test_rate=test_rate)
-            else:
-                ds = VideoActionnessDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
-                                            flow_tmpl=flow_tmpl,
-                                            bg_flow_tmpl=bg_flow_tmpl,
-                                            bg_rgb_tmpl=bg_rgb_tmpl,
-                                            bg_rgb_file=bg_rgb_list_file,
-                                            bg_flow_file=bg_flow_list_file,
-                                            transform=torchvision.transforms.Compose([
-                                                randomcropping,
-                                                Stack(roll=False),
-                                                ToTorchFormatTensor(div=True),
-                                            ]))
+
+            ds = SingleVideoDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+                              flow_tmpl=flow_tmpl,
+                                    batch_size=single_batch_size,
+                              one_hot=ont_hot,
+                              transform=torchvision.transforms.Compose([
+                                  randomcropping,
+                                  Stack(roll=False),
+                                  ToTorchFormatTensor(div=True),
+                              ]))
         else:
             cropping = torchvision.transforms.Compose([
                 GroupScale(256),
                 GroupCenterCrop(224),
             ])
-            if test_rate:
-                ds = VideoActionnessDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
-                                            flow_tmpl=flow_tmpl,
-                                            bg_flow_tmpl=bg_flow_tmpl,
-                                            bg_rgb_tmpl=bg_rgb_tmpl,
-                                            bg_rgb_file=bg_rgb_list_file,
-                                            bg_flow_file=bg_flow_list_file,
-                                            transform=torchvision.transforms.Compose([
-                                                cropping,
-                                                Stack(roll=False),
-                                                ToTorchFormatTensor(div=True),
-                                            ]), test=True, test_rate=test_rate)
-            else:
-                ds = VideoActionnessDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
-                                            flow_tmpl=flow_tmpl,
-                                            bg_flow_tmpl=bg_flow_tmpl,
-                                            bg_rgb_tmpl=bg_rgb_tmpl,
-                                            bg_rgb_file=bg_rgb_list_file,
-                                            bg_flow_file=bg_flow_list_file,
-                                            transform=torchvision.transforms.Compose([
-                                                cropping,
-                                                Stack(roll=False),
-                                                ToTorchFormatTensor(div=True),
-                                            ]))
+            ds = SingleVideoDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+                              flow_tmpl=flow_tmpl,
+                                    batch_size=single_batch_size,
+                              is_thumos14_test_folder=thumos_test,
+                              one_hot=ont_hot,
+                              transform=torchvision.transforms.Compose([
+                                  cropping,
+                                  Stack(roll=False),
+                                  ToTorchFormatTensor(div=True),
+                              ]))
         return {"dataset": ds} if not annotation_root else {'dataset': ds, 'annotation_root': annotation_root}
+
+
+
+
 
     if train:
         randomcropping = torchvision.transforms.Compose([
@@ -558,6 +627,7 @@ def build_video_dataset(dataset, train, test_rate=None, unet=False, unet_clip_nu
         else:
             ds = VideoDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
                               flow_tmpl=flow_tmpl,
+                              one_hot=ont_hot,
                               transform=torchvision.transforms.Compose([
                                   randomcropping,
                                   Stack(roll=False),
@@ -568,6 +638,16 @@ def build_video_dataset(dataset, train, test_rate=None, unet=False, unet_clip_nu
             GroupScale(256),
             GroupCenterCrop(224),
         ])
+        # if modality:
+        #     ds = SingleStreamVideoDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
+        #                       flow_tmpl=flow_tmpl,
+        #                     modality=modality,
+        #                       transform=torchvision.transforms.Compose([
+        #                           cropping,
+        #                           Stack(roll=False),
+        #                           ToTorchFormatTensor(div=True),
+        #                       ]))
+        #     return {"dataset": ds} if not annotation_root else {'dataset': ds, 'annotation_root': annotation_root}
         if test_rate:
             ds = VideoDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
                               flow_tmpl=flow_tmpl,
@@ -579,6 +659,8 @@ def build_video_dataset(dataset, train, test_rate=None, unet=False, unet_clip_nu
         else:
             ds = VideoDataSet(rgb_list_file, flow_list_file, rgb_tmpl=rgb_tmpl,
                               flow_tmpl=flow_tmpl,
+                              is_thumos14_test_folder=thumos_test,
+                              one_hot=ont_hot,
                               transform=torchvision.transforms.Compose([
                                   cropping,
                                   Stack(roll=False),

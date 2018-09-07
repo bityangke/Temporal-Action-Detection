@@ -1,6 +1,7 @@
 /data/
 /annotation/
 /features/
+/deprecated/
 /result/
 /models/tsn/
 /.idea/

@@ -4,10 +4,10 @@ import torch
 from baselines.common.vec_env.dummy_vec_env import DummyVecEnv
 
 from dataset import FeatureDataset
-from env import TADEnv
-from env import make_env
-from ops.fuser import Fuser
+from deprecated.env import TADEnv
+from deprecated.env import make_env
 from models.module import Policy, Classifier, load_clf_from_i3d
+from ops.fuser import Fuser
 
 GPU_NUMBER = 4
 

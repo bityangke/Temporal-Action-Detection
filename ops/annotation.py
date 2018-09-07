@@ -10,7 +10,7 @@ def prepare_one_video_annotation(annotation_dict, video_path):
     return []
 
 
-def build_annotation_dict(annotation_root, index_file, FPS=25):
+def build_annotation_dict(annotation_root, index_file, FPS=30):
     label_dict = {}
     with open(index_file, 'r') as f:
         for line in f:
